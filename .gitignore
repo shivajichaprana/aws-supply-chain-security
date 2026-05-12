@@ -1,0 +1,67 @@
+# Terraform
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+*.tfplan
+*.tfvars
+!*.tfvars.example
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+ENV/
+
+# Node
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Secrets & local config
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.crt
+*.pub
+!cosign.pub
+
+# Build artifacts
+dist/
+build/
+*.tgz
+
+# Scan / SBOM artifacts (large, regenerated)
+sbom-*.json
+sbom-*.spdx.json
+sbom-*.cyclonedx.json
+trivy-report-*.json
+grype-report-*.json
+
+# Cosign signatures (keys, not signed payloads)
+cosign.key
