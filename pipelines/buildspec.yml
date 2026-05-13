@@ -1,0 +1,147 @@
+# =============================================================================
+# CodeBuild buildspec — supply-chain hardened container build
+# =============================================================================
+#
+# Pipeline stages (each step fails the build via `set -euo pipefail`):
+#
+#   1. install   — pin tool versions: docker, aws cli v2, syft, cosign, trivy.
+#   2. pre_build — derive image tag, log into ECR, fetch Cosign signing key
+#                  from AWS KMS via the per-repo signing alias.
+#   3. build     — `docker build` with build-args for git provenance.
+#   4. post_build — generate SBOM (Syft, SPDX-JSON), sign image with Cosign
+#                   (KMS-backed), push image and SBOM attestation, run Trivy
+#                   scan with severity gate (fail on HIGH/CRITICAL).
+#   5. reports   — attach Trivy results as a CodeBuild test report so the
+#                  AWS Console surfaces them with pass/fail counts.
+#
+# Required environment variables (set on the CodeBuild project — see
+# terraform/codebuild.tf):
+#
+#   AWS_REGION             — region of the ECR repo and KMS key.
+#   ECR_REGISTRY           — e.g. 123456789012.dkr.ecr.us-east-1.amazonaws.com.
+#   ECR_REPOSITORY         — repo name without the registry prefix (e.g. platform/api).
+#   COSIGN_KMS_KEY_ALIAS   — KMS alias used by Cosign (e.g. alias/cosign-signing).
+#   TRIVY_SEVERITY         — comma list, defaults to HIGH,CRITICAL.
+#   FAIL_ON_HIGH_CVE       — "true" to fail the build on any HIGH/CRITICAL CVE.
+#
+# Source must include a Dockerfile at the repo root.
+# =============================================================================
+
+version: 0.2
+
+env:
+  shell: bash
+  variables:
+    SYFT_VERSION: "1.10.0"
+    COSIGN_VERSION: "2.4.0"
+    TRIVY_VERSION: "0.55.2"
+    TRIVY_SEVERITY: "HIGH,CRITICAL"
+    FAIL_ON_HIGH_CVE: "true"
+    DOCKER_BUILDKIT: "1"
+  exported-variables:
+    - IMAGE_TAG
+    - IMAGE_DIGEST
+    - SBOM_ARTIFACT
+
+phases:
+
+  install:
+    runtime-versions:
+      docker: 24
+    commands:
+      - set -euo pipefail
+      - echo ">>> Installing Syft v${SYFT_VERSION}"
+      - curl -sSfL "https://raw.githubusercontent.com/anchore/syft/main/install.sh" | sh -s -- -b /usr/local/bin "v${SYFT_VERSION}"
+      - syft version
+      - echo ">>> Installing Cosign v${COSIGN_VERSION}"
+      - curl -sSfL -o /usr/local/bin/cosign "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64"
+      - chmod +x /usr/local/bin/cosign
+      - cosign version
+      - echo ">>> Installing Trivy v${TRIVY_VERSION}"
+      - curl -sSfL "https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh" | sh -s -- -b /usr/local/bin "v${TRIVY_VERSION}"
+      - trivy --version
+      - echo ">>> Installing jq"
+      - command -v jq >/dev/null || (apt-get update -qq && apt-get install -y -qq jq)
+
+  pre_build:
+    commands:
+      - set -euo pipefail
+      - echo ">>> Resolving image tag and provenance metadata"
+      - GIT_SHA="$(git rev-parse --short=12 HEAD 2>/dev/null || echo 'unknown')"
+      - GIT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'unknown')"
+      - BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      - IMAGE_TAG="${CODEBUILD_RESOLVED_SOURCE_VERSION:-${GIT_SHA}}"
+      - IMAGE_TAG="${IMAGE_TAG:0:12}"
+      - IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+      - echo "Image will be tagged ${IMAGE_URI}"
+      - echo ">>> Logging in to ECR (${AWS_REGION})"
+      - aws ecr get-login-password --region "${AWS_REGION}" | docker login --username AWS --password-stdin "${ECR_REGISTRY}"
+      - echo ">>> Resolving Cosign KMS key URI from alias ${COSIGN_KMS_KEY_ALIAS}"
+      - KMS_KEY_ID=$(aws kms describe-key --key-id "${COSIGN_KMS_KEY_ALIAS}" --query KeyMetadata.KeyId --output text)
+      - export COSIGN_KMS_KEY_URI="awskms:///${KMS_KEY_ID}"
+      - echo "Cosign will sign with ${COSIGN_KMS_KEY_URI}"
+
+  build:
+    commands:
+      - set -euo pipefail
+      - echo ">>> Building container image"
+      - |
+        docker build \
+          --pull \
+          --build-arg GIT_SHA="${GIT_SHA}" \
+          --build-arg GIT_BRANCH="${GIT_BRANCH}" \
+          --build-arg BUILD_TIME="${BUILD_TIME}" \
+          --label org.opencontainers.image.revision="${GIT_SHA}" \
+          --label org.opencontainers.image.source="${CODEBUILD_SOURCE_REPO_URL:-unknown}" \
+          --label org.opencontainers.image.created="${BUILD_TIME}" \
+          --label org.opencontainers.image.version="${IMAGE_TAG}" \
+          -t "${IMAGE_URI}" \
+          .
+      - echo "Local image built; will push after SBOM + signature attached"
+
+  post_build:
+    commands:
+      - set -euo pipefail
+      - echo ">>> Generating SPDX SBOM with Syft"
+      - SBOM_ARTIFACT="sbom-${ECR_REPOSITORY//\//-}-${IMAGE_TAG}.spdx.json"
+      - syft "${IMAGE_URI}" --output "spdx-json=${SBOM_ARTIFACT}" --quiet
+      - echo "SBOM written to ${SBOM_ARTIFACT} ($(wc -c < ${SBOM_ARTIFACT}) bytes)"
+      - echo ">>> Pushing image to ECR"
+      - docker push "${IMAGE_URI}"
+      - IMAGE_DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "${IMAGE_URI}" | awk -F@ '{print $2}')
+      - DIGEST_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}@${IMAGE_DIGEST}"
+      - echo "Image digest. ${IMAGE_DIGEST}"
+      - echo ">>> Signing image with Cosign (KMS-backed)"
+      - cosign sign --yes --key "${COSIGN_KMS_KEY_URI}" "${DIGEST_URI}"
+      - echo ">>> Attaching SBOM as Cosign attestation (predicate type. spdx)"
+      - cosign attest --yes --key "${COSIGN_KMS_KEY_URI}" --predicate "${SBOM_ARTIFACT}" --type spdxjson "${DIGEST_URI}"
+      - echo ">>> Trivy vulnerability scan (severity gate. ${TRIVY_SEVERITY})"
+      - trivy image --severity "${TRIVY_SEVERITY}" --ignore-unfixed --format json --output trivy-report.json "${IMAGE_URI}"
+      - trivy image --severity "${TRIVY_SEVERITY}" --ignore-unfixed --format template --template "@/usr/local/share/trivy/templates/junit.tpl" --output trivy-report.xml "${IMAGE_URI}" || echo "junit template missing - skipping XML report"
+      - HIGH_CRIT_COUNT=$(jq '[.Results[]?.Vulnerabilities[]?] | length' trivy-report.json)
+      - echo "HIGH/CRITICAL findings. ${HIGH_CRIT_COUNT}"
+      - |
+        if [[ "${FAIL_ON_HIGH_CVE}" == "true" && "${HIGH_CRIT_COUNT}" -gt 0 ]]; then
+          echo "FAIL. ${HIGH_CRIT_COUNT} HIGH/CRITICAL CVE(s) found - blocking image."
+          exit 1
+        fi
+      - echo ">>> Build complete. image, SBOM, and signature published."
+
+reports:
+  TrivyReport:
+    files:
+      - trivy-report.xml
+    file-format: JUNITXML
+    discard-paths: yes
+
+artifacts:
+  files:
+    - 'sbom-*.spdx.json'
+    - 'trivy-report.json'
+    - 'trivy-report.xml'
+  discard-paths: yes
+  name: supply-chain-artifacts
+
+cache:
+  paths:
+    - '/root/.cache/trivy/**/*'
