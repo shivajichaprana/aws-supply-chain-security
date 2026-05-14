@@ -1,0 +1,299 @@
+# =============================================================================
+# Gatekeeper ConstraintTemplates + Constraints
+# =============================================================================
+#
+# This file wires the two Rego policies in this directory into the Open Policy
+# Agent Gatekeeper admission controller.
+#
+# Layout:
+#   1. ConstraintTemplate K8sRequireSignedImages (embeds require-signed-images.rego)
+#   2. ConstraintTemplate K8sBlockHighCVE        (embeds block-high-cve.rego)
+#   3. Constraint K8sRequireSignedImages "require-signed-images" -- enforce mode
+#   4. Constraint K8sBlockHighCVE        "block-high-cve"         -- enforce mode
+#
+# The "kubernetes.io/system-namespaces" exclusion is handled at the
+# Config.config.gatekeeper.sh level (not in this file) -- consult the
+# README for the cluster-wide Gatekeeper Config resource.
+#
+# Roll-out advice:
+#   - Apply this file in `enforcementAction: dryrun` first to surface offenders
+#     via Gatekeeper events without blocking traffic.
+#   - Once dryrun is clean for at least 72 hours and Inspector annotations are
+#     reliably propagated by CI, switch to `enforcementAction: deny` per the
+#     blocks at the bottom of this file.
+#
+# Maintenance:
+#   - Keep the embedded Rego in the ConstraintTemplates byte-for-byte identical
+#     to the standalone .rego files. The supply-chain-ci workflow diffs them.
+# =============================================================================
+
+---
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8srequiresignedimages
+  annotations:
+    description: >-
+      Requires every container image to (a) come from an approved registry and
+      (b) carry the cosign.sigstore.dev/signed="true" annotation produced by
+      the CI/CD pipeline.
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sRequireSignedImages
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            approvedRegistries:
+              type: array
+              description: >-
+                Registry prefixes that the policy treats as trusted.
+                Example: ["123456789012.dkr.ecr.us-east-1.amazonaws.com"].
+              items:
+                type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8srequiresignedimages
+
+        import future.keywords.contains
+        import future.keywords.if
+        import future.keywords.in
+
+        violation[{"msg": msg, "details": details}] {
+          container := input_containers[_]
+          not image_signed(container.image)
+          msg := sprintf(
+            "image %q is not signed by an approved Cosign profile (annotation %q missing or false)",
+            [container.image, signature_annotation_key],
+          )
+          details := {
+            "container":  container.name,
+            "image":      container.image,
+            "annotation": signature_annotation_key,
+          }
+        }
+
+        violation[{"msg": msg, "details": details}] {
+          container := input_containers[_]
+          not approved_registry(container.image)
+          msg := sprintf(
+            "image %q is not from an approved registry -- list provided via parameters.approvedRegistries",
+            [container.image],
+          )
+          details := {
+            "container":          container.name,
+            "image":              container.image,
+            "approvedRegistries": parameters_approved_registries,
+          }
+        }
+
+        signature_annotation_key := "cosign.sigstore.dev/signed"
+
+        image_signed(_image) {
+          val := pod_annotation(signature_annotation_key)
+          val == "true"
+        }
+
+        approved_registry(image) {
+          prefix := parameters_approved_registries[_]
+          startswith(image, sprintf("%s/", [trim_suffix(prefix, "/")]))
+        }
+
+        parameters_approved_registries := registries {
+          registries := input.parameters.approvedRegistries
+          count(registries) > 0
+        } else := []
+
+        input_containers[container] {
+          container := input.review.object.spec.containers[_]
+        }
+        input_containers[container] {
+          container := input.review.object.spec.initContainers[_]
+        }
+        input_containers[container] {
+          container := input.review.object.spec.template.spec.containers[_]
+        }
+        input_containers[container] {
+          container := input.review.object.spec.template.spec.initContainers[_]
+        }
+
+        pod_annotation(key) := value {
+          value := input.review.object.metadata.annotations[key]
+        } else := value {
+          value := input.review.object.spec.template.metadata.annotations[key]
+        } else := ""
+
+---
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8sblockhighcve
+  annotations:
+    description: >-
+      Blocks pods whose images carry CRITICAL (and optionally HIGH) findings
+      reported by Amazon Inspector v2. Findings are advertised via the
+      inspector.aws/findings annotation populated by the CI/CD pipeline.
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sBlockHighCVE
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            criticalThreshold:
+              type: integer
+              description: >-
+                Maximum number of CRITICAL findings allowed. Default 0 means
+                a single CRITICAL is enough to deny admission.
+              minimum: 0
+            highThreshold:
+              type: integer
+              description: >-
+                Maximum number of HIGH findings allowed. Set to -1 to disable
+                the HIGH check entirely (CRITICAL still enforced). Default -1.
+              minimum: -1
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8sblockhighcve
+
+        import future.keywords.contains
+        import future.keywords.if
+        import future.keywords.in
+
+        violation[{"msg": msg, "details": details}] {
+          annotation_missing
+          msg := sprintf(
+            "image is missing Inspector findings annotation %q -- every image must be scanned before deploy",
+            [findings_annotation_key],
+          )
+          details := {"annotation": findings_annotation_key}
+        }
+
+        violation[{"msg": msg, "details": details}] {
+          not annotation_missing
+          criticals := findings_count("critical")
+          criticals > critical_threshold
+          msg := sprintf(
+            "image has %d CRITICAL Inspector findings (threshold = %d). Remediate via base-image bump or package patch.",
+            [criticals, critical_threshold],
+          )
+          details := {
+            "critical":  criticals,
+            "threshold": critical_threshold,
+            "findings":  findings_raw,
+          }
+        }
+
+        violation[{"msg": msg, "details": details}] {
+          not annotation_missing
+          highs := findings_count("high")
+          highs > high_threshold
+          high_threshold >= 0
+          msg := sprintf(
+            "image has %d HIGH Inspector findings (threshold = %d).",
+            [highs, high_threshold],
+          )
+          details := {
+            "high":      highs,
+            "threshold": high_threshold,
+            "findings":  findings_raw,
+          }
+        }
+
+        findings_annotation_key := "inspector.aws/findings"
+
+        findings_raw := value {
+          value := input.review.object.metadata.annotations[findings_annotation_key]
+        } else := value {
+          value := input.review.object.spec.template.metadata.annotations[findings_annotation_key]
+        } else := ""
+
+        annotation_missing {
+          findings_raw == ""
+        }
+
+        findings_map := result {
+          pairs := split(findings_raw, ",")
+          result := {key: cnt |
+            pair := pairs[_]
+            kv := split(pair, "=")
+            count(kv) == 2
+            key := lower(trim_space(kv[0]))
+            cnt := to_number(trim_space(kv[1]))
+          }
+        }
+
+        findings_count(severity) := n {
+          n := findings_map[severity]
+        } else := 0
+
+        critical_threshold := t {
+          t := input.parameters.criticalThreshold
+        } else := 0
+
+        high_threshold := t {
+          t := input.parameters.highThreshold
+        } else := -1
+
+# -----------------------------------------------------------------------------
+# Constraint bindings -- where the templates are actually scoped + parameterised
+# -----------------------------------------------------------------------------
+---
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sRequireSignedImages
+metadata:
+  name: require-signed-images
+spec:
+  enforcementAction: deny   # flip to "dryrun" for initial rollout
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+      - apiGroups: ["apps"]
+        kinds: ["Deployment", "StatefulSet", "DaemonSet", "ReplicaSet"]
+      - apiGroups: ["batch"]
+        kinds: ["Job", "CronJob"]
+    excludedNamespaces:
+      - kube-system
+      - kube-public
+      - gatekeeper-system
+      - cert-manager
+      - karpenter
+  parameters:
+    approvedRegistries:
+      # Replace with the customer-owned ECR registries. Multiple regions are
+      # acceptable. Public ECR is intentionally NOT in this list -- pipeline
+      # images must come from a registry under our control.
+      - "123456789012.dkr.ecr.us-east-1.amazonaws.com"
+      - "123456789012.dkr.ecr.eu-west-1.amazonaws.com"
+
+---
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sBlockHighCVE
+metadata:
+  name: block-high-cve
+spec:
+  enforcementAction: deny   # flip to "dryrun" for initial rollout
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+      - apiGroups: ["apps"]
+        kinds: ["Deployment", "StatefulSet", "DaemonSet", "ReplicaSet"]
+      - apiGroups: ["batch"]
+        kinds: ["Job", "CronJob"]
+    excludedNamespaces:
+      - kube-system
+      - kube-public
+      - gatekeeper-system
+      - cert-manager
+      - karpenter
+  parameters:
+    criticalThreshold: 0   # one CRITICAL is enough to deny
+    highThreshold: -1      # do not gate on HIGH (opt-in later, per-namespace)
