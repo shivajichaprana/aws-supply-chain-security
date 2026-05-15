@@ -38,8 +38,3 @@ make apply
 ```
 
 See `docs/` for architecture and runbooks once published.
-
-## Status
-
-Active development. See the `60-day-aws-plan.md` (parent repo `Git automation`)
-for the day-by-day delivery schedule (Days 49-54).
