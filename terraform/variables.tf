@@ -69,3 +69,66 @@ variable "enable_inspector_lambda" {
   type        = bool
   default     = false
 }
+
+# ---------------------------------------------------------------------------
+# Security Hub — standards toggles.
+# Day 52: see security-hub.tf.
+# ---------------------------------------------------------------------------
+variable "enable_cis_standard" {
+  description = "Subscribe Security Hub to the CIS AWS Foundations Benchmark v1.4.0 standard."
+  type        = bool
+  default     = false
+}
+
+variable "enable_nist_standard" {
+  description = "Subscribe Security Hub to the NIST 800-53 Rev 5 standard."
+  type        = bool
+  default     = false
+}
+
+variable "enable_pci_standard" {
+  description = "Subscribe Security Hub to the PCI-DSS v3.2.1 standard."
+  type        = bool
+  default     = false
+}
+
+# ---------------------------------------------------------------------------
+# Security Hub — product integrations.
+# Inspector is always-on (see security-hub.tf); the rest are opt-in.
+# ---------------------------------------------------------------------------
+variable "enable_guardduty_integration" {
+  description = "Subscribe to the GuardDuty -> Security Hub product integration."
+  type        = bool
+  default     = false
+}
+
+variable "enable_macie_integration" {
+  description = "Subscribe to the Macie -> Security Hub product integration."
+  type        = bool
+  default     = false
+}
+
+variable "enable_access_analyzer_integration" {
+  description = "Subscribe to the IAM Access Analyzer -> Security Hub product integration."
+  type        = bool
+  default     = false
+}
+
+variable "enable_config_integration" {
+  description = "Subscribe to the AWS Config -> Security Hub product integration."
+  type        = bool
+  default     = false
+}
+
+variable "enable_health_integration" {
+  description = "Subscribe to the AWS Health -> Security Hub product integration."
+  type        = bool
+  default     = false
+}
+
+variable "enable_finding_aggregation" {
+  description = "Enable Security Hub cross-region finding aggregation (all regions to this region)."
+  type        = bool
+  default     = false
+}
+

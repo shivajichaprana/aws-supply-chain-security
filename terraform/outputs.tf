@@ -22,3 +22,29 @@ output "inspector_enabled_resources" {
   description = "Resource types Inspector v2 has been enabled for."
   value       = local.inspector_resource_types
 }
+
+# ---------------------------------------------------------------------------
+# Security Hub outputs (Day 52).
+# ---------------------------------------------------------------------------
+output "security_hub_account_arn" {
+  description = "ARN of the enabled Security Hub account resource."
+  value       = aws_securityhub_account.this.arn
+}
+
+output "security_hub_standards_enabled" {
+  description = "List of Security Hub standards ARNs subscribed."
+  value       = local.standards_to_enable
+}
+
+output "security_hub_products_enabled" {
+  description = "List of Security Hub product integration ARNs subscribed."
+  value       = local.products_to_enable
+}
+
+output "security_hub_insight_arns" {
+  description = "ARNs of the saved Security Hub Insights for triage."
+  value = {
+    open_critical_container = aws_securityhub_insight.open_critical_container_findings.arn
+    ecr_misconfigurations   = aws_securityhub_insight.ecr_misconfigurations.arn
+  }
+}
