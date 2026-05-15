@@ -132,3 +132,45 @@ variable "enable_finding_aggregation" {
   default     = false
 }
 
+
+# ---------------------------------------------------------------------------
+# EventBridge findings forwarder (Day 52).
+# ---------------------------------------------------------------------------
+variable "finding_severity_threshold" {
+  description = "Minimum Security Hub finding severity that triggers a notification (LOW|MEDIUM|HIGH|CRITICAL)."
+  type        = string
+  default     = "HIGH"
+
+  validation {
+    condition     = contains(["LOW", "MEDIUM", "HIGH", "CRITICAL"], var.finding_severity_threshold)
+    error_message = "finding_severity_threshold must be one of: LOW, MEDIUM, HIGH, CRITICAL."
+  }
+}
+
+variable "slack_webhook_secret_name" {
+  description = "Name of the Secrets Manager secret containing the Slack incoming-webhook URL (key: webhook_url). When null the Slack Lambda is not deployed and findings are still pushed to SNS."
+  type        = string
+  default     = null
+}
+
+variable "notification_email" {
+  description = "Optional email subscribed directly to the SNS topic for findings (in addition to the Slack Lambda)."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.notification_email == null || can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", var.notification_email))
+    error_message = "notification_email must be a valid email address or null."
+  }
+}
+
+variable "lambda_log_retention_days" {
+  description = "CloudWatch Logs retention (days) for the Slack forwarder Lambda."
+  type        = number
+  default     = 30
+
+  validation {
+    condition     = contains([1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1827, 3653], var.lambda_log_retention_days)
+    error_message = "lambda_log_retention_days must be one of the values supported by CloudWatch Logs."
+  }
+}
