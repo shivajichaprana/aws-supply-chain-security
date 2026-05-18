@@ -1,0 +1,334 @@
+# =============================================================================
+# Supply-chain CI pipeline
+# =============================================================================
+#
+# Runs on every pull request and push to main. Validates:
+#
+#   1. terraform fmt + validate + tflint    (every *.tf file)
+#   2. checkov                              (static security scan of Terraform)
+#   3. opa test                             (Rego unit tests in tests/gatekeeper)
+#   4. constraint-template drift            (embedded Rego in constraints.yaml
+#                                            must match the standalone .rego)
+#   5. trivy fs scan                        (workflow + Dockerfile + IaC)
+#   6. shellcheck                           (scripts/ and pipelines/)
+#   7. yamllint                             (workflow + constraint manifests)
+#   8. python lint + type check             (terraform/lambda + scripts/*.py)
+#   9. buildspec dry-run                    (exercises buildspec.yml shell logic)
+#
+# Concurrency:
+#   Cancels in-flight runs on the same PR so reviewers always see the latest.
+#
+# Permissions:
+#   Least-privilege: contents:read only. No write tokens issued by this
+#   workflow; releases are cut out-of-band via the release workflow.
+# =============================================================================
+
+name: supply-chain-ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: supply-chain-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  TF_VERSION: "1.7.5"
+  TFLINT_VERSION: "v0.50.3"
+  OPA_VERSION: "0.65.0"
+  CHECKOV_VERSION: "3.2.255"
+  TRIVY_VERSION: "0.55.2"
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  terraform:
+    name: terraform (${{ matrix.task }})
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        task: [fmt, validate, tflint]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Terraform ${{ env.TF_VERSION }}
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: terraform fmt -check
+        if: matrix.task == 'fmt'
+        working-directory: terraform
+        run: terraform fmt -check -recursive -diff
+
+      - name: terraform init (no backend)
+        if: matrix.task == 'validate'
+        working-directory: terraform
+        run: terraform init -backend=false -input=false
+
+      - name: terraform validate
+        if: matrix.task == 'validate'
+        working-directory: terraform
+        run: terraform validate -no-color
+
+      - name: Cache tflint plugin dir
+        if: matrix.task == 'tflint'
+        uses: actions/cache@v4
+        with:
+          path: ~/.tflint.d/plugins
+          key: tflint-${{ env.TFLINT_VERSION }}-${{ hashFiles('**/.tflint.hcl') }}
+
+      - name: Set up tflint
+        if: matrix.task == 'tflint'
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: ${{ env.TFLINT_VERSION }}
+
+      - name: tflint --init
+        if: matrix.task == 'tflint'
+        working-directory: terraform
+        run: tflint --init
+
+      - name: tflint --recursive
+        if: matrix.task == 'tflint'
+        working-directory: terraform
+        run: tflint --recursive --format=compact
+
+  checkov:
+    name: checkov (terraform)
+    runs-on: ubuntu-22.04
+    needs: terraform
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install checkov ${{ env.CHECKOV_VERSION }}
+        run: pip install --no-cache-dir "checkov==${{ env.CHECKOV_VERSION }}"
+
+      - name: checkov scan terraform/
+        run: |
+          checkov \
+            --directory terraform \
+            --framework terraform \
+            --quiet \
+            --compact \
+            --soft-fail-on LOW \
+            --output cli
+
+  opa-test:
+    name: opa test (gatekeeper policies)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install OPA ${{ env.OPA_VERSION }}
+        run: |
+          curl -fsSL -o /tmp/opa \
+            "https://github.com/open-policy-agent/opa/releases/download/v${OPA_VERSION}/opa_linux_amd64_static"
+          chmod +x /tmp/opa
+          /tmp/opa version
+
+      - name: opa fmt --list (must be clean)
+        run: |
+          unformatted=$(/tmp/opa fmt --list policies/gatekeeper tests/gatekeeper || true)
+          if [ -n "${unformatted}" ]; then
+            echo "::error::Unformatted Rego files:"
+            echo "${unformatted}"
+            exit 1
+          fi
+
+      - name: opa test (verbose, coverage)
+        run: |
+          /tmp/opa test \
+            --verbose \
+            --coverage \
+            --format=json \
+            policies/gatekeeper tests/gatekeeper \
+            | tee opa-test-report.json
+          jq -r '
+            "Tests passed: \(.pass // 0)",
+            "Tests failed: \(.fail // 0)",
+            "Tests skipped: \(.skip // 0)",
+            "Coverage: \(.coverage // 0)%"
+          ' opa-test-report.json
+
+      - name: Upload OPA coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: opa-test-report
+          path: opa-test-report.json
+          retention-days: 14
+
+  constraint-template-drift:
+    name: ConstraintTemplate drift check
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install PyYAML
+        run: pip install --no-cache-dir "PyYAML>=6.0"
+
+      - name: Run drift checker
+        run: python tests/check_template_drift.py
+
+  trivy-fs:
+    name: trivy fs (config + secrets)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache Trivy DB
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/trivy
+          key: trivy-db-${{ env.TRIVY_VERSION }}-${{ hashFiles('**/Dockerfile', '**/*.tf', '**/*.yml') }}
+          restore-keys: |
+            trivy-db-${{ env.TRIVY_VERSION }}-
+
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          ignore-unfixed: true
+          scanners: misconfig,secret
+          format: table
+          skip-dirs: .git,docs
+
+  shellcheck:
+    name: shellcheck (scripts, tests)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run shellcheck
+        uses: ludeeus/action-shellcheck@2.0.0
+        with:
+          severity: warning
+          scandir: '.'
+          ignore_paths: 'docs .git terraform .github'
+
+  yamllint:
+    name: yamllint (workflows, policies)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install yamllint
+        run: pip install --no-cache-dir "yamllint==1.35.1"
+
+      - name: Run yamllint
+        run: |
+          yamllint \
+            -d "{extends: relaxed, rules: {line-length: {max: 200}, trailing-spaces: enable}}" \
+            .github/workflows \
+            policies/gatekeeper/constraints.yaml \
+            pipelines/buildspec.yml
+
+  python:
+    name: python lint + type
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dev tooling
+        run: |
+          pip install --no-cache-dir \
+            "ruff==0.6.9" \
+            "mypy==1.11.2"
+
+      - name: ruff (lint)
+        run: |
+          ruff check \
+            --select E,F,W,B,I,UP,SIM,RUF \
+            --line-length 100 \
+            terraform/lambda scripts tests
+
+      - name: mypy (type check, non-blocking)
+        run: |
+          mypy \
+            --ignore-missing-imports \
+            --strict-optional \
+            --warn-redundant-casts \
+            --warn-unused-ignores \
+            terraform/lambda scripts tests || true
+
+  buildspec-dryrun:
+    name: codebuild buildspec dry-run
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run dry-run
+        run: bash tests/codebuild-dryrun.sh
+
+  ci-passed:
+    name: ci-passed (aggregate)
+    runs-on: ubuntu-22.04
+    if: always()
+    needs:
+      - terraform
+      - checkov
+      - opa-test
+      - constraint-template-drift
+      - trivy-fs
+      - shellcheck
+      - yamllint
+      - python
+      - buildspec-dryrun
+    steps:
+      - name: Verify all dependencies passed
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]] \
+            || [[ "${{ contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "One or more required jobs did not succeed:"
+            echo '${{ toJSON(needs) }}'
+            exit 1
+          fi
+          echo "All required jobs passed."

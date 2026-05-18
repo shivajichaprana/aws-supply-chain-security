@@ -112,12 +112,12 @@ annotation_missing if {
 # Parse the comma-separated key=value list into a map { severity: count }.
 findings_map := result if {
 	pairs := split(findings_raw, ",")
-	result := {key: count |
+	result := {key: cnt |
 		pair := pairs[_]
 		kv := split(pair, "=")
 		count(kv) == 2
 		key := lower(trim_space(kv[0]))
-		count := to_number(trim_space(kv[1]))
+		cnt := to_number(trim_space(kv[1]))
 	}
 }
 
