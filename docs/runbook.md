@@ -1,6 +1,6 @@
 # Runbook
 
-Operating procedures for the day-to-day care and feeding of the
+Operating procedures for the routine care and feeding of the
 aws-supply-chain-security stack. Each section names the symptom you would
 see, the alert that fires, and the exact steps to take. Keep this open in
 a tab during on-call.

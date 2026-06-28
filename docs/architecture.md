@@ -7,7 +7,7 @@ The complementary docs are:
 
 - [SLSA Level 2 mapping](slsa-level2.md) — how the stack satisfies the SLSA
   Build L2 requirements, control by control.
-- [Runbook](runbook.md) — the day-to-day operating procedures (blocked
+- [Runbook](runbook.md) — the routine operating procedures (blocked
   admission, finding triage, key rotation, vault unseal).
 
 ## 1. Goals and non-goals
