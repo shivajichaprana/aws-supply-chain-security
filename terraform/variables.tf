@@ -72,7 +72,7 @@ variable "enable_inspector_lambda" {
 
 # ---------------------------------------------------------------------------
 # Security Hub — standards toggles.
-# Day 52: see security-hub.tf.
+# See security-hub.tf.
 # ---------------------------------------------------------------------------
 variable "enable_cis_standard" {
   description = "Subscribe Security Hub to the CIS AWS Foundations Benchmark v1.4.0 standard."
@@ -134,7 +134,7 @@ variable "enable_finding_aggregation" {
 
 
 # ---------------------------------------------------------------------------
-# EventBridge findings forwarder (Day 52).
+# EventBridge findings forwarder.
 # ---------------------------------------------------------------------------
 variable "finding_severity_threshold" {
   description = "Minimum Security Hub finding severity that triggers a notification (LOW|MEDIUM|HIGH|CRITICAL)."

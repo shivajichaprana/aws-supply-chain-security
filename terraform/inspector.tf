@@ -10,7 +10,7 @@
 #     scanning are optional and controlled by `enable_inspector_ec2` and
 #     `enable_inspector_lambda` to avoid surprise pricing in fresh accounts.
 #   - Findings flow into Security Hub automatically once both services are
-#     enabled (Security Hub wiring lives in security-hub.tf — see Day 52).
+#     enabled (Security Hub wiring lives in security-hub.tf).
 ###############################################################################
 
 locals {

@@ -24,7 +24,7 @@ output "inspector_enabled_resources" {
 }
 
 # ---------------------------------------------------------------------------
-# Security Hub outputs (Day 52).
+# Security Hub outputs.
 # ---------------------------------------------------------------------------
 output "security_hub_account_arn" {
   description = "ARN of the enabled Security Hub account resource."
