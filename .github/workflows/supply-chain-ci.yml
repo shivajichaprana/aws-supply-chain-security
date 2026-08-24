@@ -120,7 +120,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
 
       - name: Install checkov ${{ env.CHECKOV_VERSION }}
         run: pip install --no-cache-dir "checkov==${{ env.CHECKOV_VERSION }}"
@@ -215,7 +214,7 @@ jobs:
             trivy-db-${{ env.TRIVY_VERSION }}-
 
       - name: Run Trivy filesystem scan
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@v0.36.0 # 0.24.0 was never a real tag
         with:
           scan-type: fs
           scan-ref: .
@@ -274,7 +273,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
 
       - name: Install dev tooling
         run: |

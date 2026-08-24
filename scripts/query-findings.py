@@ -27,7 +27,7 @@ import os
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Iterable
 
 try:
     import boto3
@@ -75,7 +75,7 @@ class Finding:
     updated_at: str
 
     @classmethod
-    def from_asff(cls, raw: Dict[str, Any]) -> "Finding":
+    def from_asff(cls, raw: dict[str, Any]) -> Finding:
         """Build a Finding from a raw Security Hub ASFF document."""
         resources = raw.get("Resources") or []
         return cls(
@@ -93,14 +93,14 @@ class Finding:
         )
 
 
-def _build_filters(args: argparse.Namespace) -> Dict[str, Any]:
+def _build_filters(args: argparse.Namespace) -> dict[str, Any]:
     """Build a Security Hub `Filters` dict from CLI args."""
     severities = [
         s for s in SEVERITY_ORDER if SEVERITY_ORDER[s] >= SEVERITY_ORDER[args.severity]
     ]
 
     cutoff = datetime.now(timezone.utc) - timedelta(hours=args.hours)
-    filters: Dict[str, Any] = {
+    filters: dict[str, Any] = {
         "SeverityLabel": [{"Comparison": "EQUALS", "Value": s} for s in severities],
         "WorkflowStatus": [{"Comparison": "EQUALS", "Value": args.workflow}],
         "RecordState": [{"Comparison": "EQUALS", "Value": "ACTIVE"}],
@@ -123,7 +123,7 @@ def _build_filters(args: argparse.Namespace) -> Dict[str, Any]:
     return filters
 
 
-def _iter_findings(client: Any, filters: Dict[str, Any]) -> Iterable[Dict[str, Any]]:
+def _iter_findings(client: Any, filters: dict[str, Any]) -> Iterable[dict[str, Any]]:
     """Yield findings page-by-page (handles Security Hub pagination)."""
     paginator = client.get_paginator("get_findings")
     page_iter = paginator.paginate(
@@ -135,7 +135,7 @@ def _iter_findings(client: Any, filters: Dict[str, Any]) -> Iterable[Dict[str, A
         yield from page.get("Findings", [])
 
 
-def _render_table(findings: List[Finding], use_color: bool) -> str:
+def _render_table(findings: list[Finding], use_color: bool) -> str:
     """Render findings as a fixed-width text table."""
     if not findings:
         return "No findings matched the filter."
@@ -154,11 +154,11 @@ def _render_table(findings: List[Finding], use_color: bool) -> str:
     ]
 
     widths = [
-        max(len(str(row[col])) for row in [headers] + rows)
+        max(len(str(row[col])) for row in [headers, *rows])
         for col in range(len(headers))
     ]
 
-    def _fmt_row(row: List[str], color: Optional[str] = None) -> str:
+    def _fmt_row(row: list[str], color: str | None = None) -> str:
         cells = "  ".join(str(c).ljust(widths[i]) for i, c in enumerate(row))
         if color and use_color:
             return f"{color}{cells}{_RESET}"
@@ -171,12 +171,12 @@ def _render_table(findings: List[Finding], use_color: bool) -> str:
     return "\n".join(lines)
 
 
-def _render_json(findings: List[Finding]) -> str:
+def _render_json(findings: list[Finding]) -> str:
     """Render findings as JSON (one document per finding)."""
     return json.dumps([f.__dict__ for f in findings], indent=2, default=str)
 
 
-def _build_client(region: Optional[str]) -> Any:
+def _build_client(region: str | None) -> Any:
     """Build the Security Hub boto3 client with sensible retries."""
     config = Config(
         retries={"max_attempts": 8, "mode": "adaptive"},
@@ -250,7 +250,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     """CLI entry point."""
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
@@ -264,7 +264,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         client = _build_client(args.region)
         filters = _build_filters(args)
 
-        findings: List[Finding] = []
+        findings: list[Finding] = []
         for raw in _iter_findings(client, filters):
             findings.append(Finding.from_asff(raw))
             if len(findings) >= args.limit:

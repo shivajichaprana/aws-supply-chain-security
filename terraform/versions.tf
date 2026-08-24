@@ -6,6 +6,13 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.50"
     }
+
+    # data.archive_file in findings-forwarder.tf comes from this provider.
+    # tflint flags it when it is used but not declared.
+    archive = {
+      source  = "hashicorp/archive"
+      version = "~> 2.4"
+    }
   }
 }
 

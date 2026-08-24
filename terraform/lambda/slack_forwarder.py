@@ -17,7 +17,7 @@ import os
 import urllib.error
 import urllib.request
 from functools import lru_cache
-from typing import Any, Dict, List
+from typing import Any
 
 import boto3
 from botocore.exceptions import ClientError
@@ -29,7 +29,7 @@ MIN_SEVERITY = os.environ.get("MIN_SEVERITY", "HIGH").upper()
 logger = logging.getLogger()
 logger.setLevel(LOG_LEVEL)
 
-SEVERITY_ORDER: Dict[str, int] = {
+SEVERITY_ORDER: dict[str, int] = {
     "INFORMATIONAL": 0,
     "LOW": 1,
     "MEDIUM": 2,
@@ -37,7 +37,7 @@ SEVERITY_ORDER: Dict[str, int] = {
     "CRITICAL": 4,
 }
 
-SEVERITY_COLORS: Dict[str, str] = {
+SEVERITY_COLORS: dict[str, str] = {
     "INFORMATIONAL": "#9aa3af",
     "LOW": "#3b82f6",
     "MEDIUM": "#f59e0b",
@@ -45,7 +45,7 @@ SEVERITY_COLORS: Dict[str, str] = {
     "CRITICAL": "#dc2626",
 }
 
-SEVERITY_EMOJIS: Dict[str, str] = {
+SEVERITY_EMOJIS: dict[str, str] = {
     "INFORMATIONAL": ":information_source:",
     "LOW": ":large_blue_circle:",
     "MEDIUM": ":warning:",
@@ -95,7 +95,7 @@ def _console_url(account: str, region: str, finding_id: str) -> str:
     )
 
 
-def _format_finding(finding: Dict[str, Any]) -> Dict[str, Any]:
+def _format_finding(finding: dict[str, Any]) -> dict[str, Any]:
     """Convert a single ASFF finding into a Slack message attachment."""
     severity = (finding.get("Severity", {}).get("Label") or "INFORMATIONAL").upper()
     title = finding.get("Title", "Untitled finding")
@@ -106,7 +106,7 @@ def _format_finding(finding: Dict[str, Any]) -> Dict[str, Any]:
     account = finding.get("AwsAccountId", "unknown")
     region = finding.get("Region", "unknown")
     product = finding.get("ProductName", "unknown")
-    resources: List[Dict[str, Any]] = finding.get("Resources") or []
+    resources: list[dict[str, Any]] = finding.get("Resources") or []
     resource_summary = (
         ", ".join(r.get("Id", "?") for r in resources[:3]) if resources else "none"
     )
@@ -137,7 +137,7 @@ def _format_finding(finding: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _post_to_slack(payload: Dict[str, Any]) -> None:
+def _post_to_slack(payload: dict[str, Any]) -> None:
     """POST a Slack incoming-webhook payload."""
     body = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
@@ -157,7 +157,7 @@ def _post_to_slack(payload: Dict[str, Any]) -> None:
         raise RuntimeError("slack webhook delivery failed") from exc
 
 
-def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
+def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     """Lambda entry point. Returns delivery counts for CloudWatch metrics."""
     logger.debug("incoming event: %s", json.dumps(event)[:2000])
 

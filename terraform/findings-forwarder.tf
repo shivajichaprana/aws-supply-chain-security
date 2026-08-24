@@ -32,8 +32,8 @@ locals {
   forwarder_name = "${var.project_tag}-securityhub-forwarder"
 
   # Severity values >= the configured threshold.
-  severity_levels   = ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
-  threshold_index   = index(local.severity_levels, var.finding_severity_threshold)
+  severity_levels    = ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+  threshold_index    = index(local.severity_levels, var.finding_severity_threshold)
   matched_severities = slice(local.severity_levels, local.threshold_index, length(local.severity_levels))
 
   # Whether to deploy the Slack Lambda. Without a secret name we still ship
@@ -179,14 +179,14 @@ resource "aws_cloudwatch_event_target" "to_sns" {
   # The transformer extracts only the most actionable fields per finding.
   input_transformer {
     input_paths = {
-      account     = "$.detail.findings[0].AwsAccountId"
-      region      = "$.region"
-      title       = "$.detail.findings[0].Title"
-      severity    = "$.detail.findings[0].Severity.Label"
-      product     = "$.detail.findings[0].ProductName"
-      resource    = "$.detail.findings[0].Resources[0].Id"
-      finding_id  = "$.detail.findings[0].Id"
-      created_at  = "$.detail.findings[0].CreatedAt"
+      account    = "$.detail.findings[0].AwsAccountId"
+      region     = "$.region"
+      title      = "$.detail.findings[0].Title"
+      severity   = "$.detail.findings[0].Severity.Label"
+      product    = "$.detail.findings[0].ProductName"
+      resource   = "$.detail.findings[0].Resources[0].Id"
+      finding_id = "$.detail.findings[0].Id"
+      created_at = "$.detail.findings[0].CreatedAt"
     }
     input_template = <<EOT
 {
