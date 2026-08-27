@@ -65,9 +65,9 @@ violation contains {"msg": msg, "details": details} if {
 		[criticals, critical_threshold],
 	)
 	details := {
-		"critical":  criticals,
+		"critical": criticals,
 		"threshold": critical_threshold,
-		"findings":  findings_raw,
+		"findings": findings_raw,
 	}
 }
 
@@ -79,16 +79,16 @@ violation contains {"msg": msg, "details": details} if {
 
 	highs := findings_count("high")
 	highs > high_threshold
-	high_threshold >= 0  # negative threshold means "do not evaluate"
+	high_threshold >= 0 # negative threshold means "do not evaluate"
 
 	msg := sprintf(
 		"image has %d HIGH Inspector findings (threshold = %d).",
 		[highs, high_threshold],
 	)
 	details := {
-		"high":      highs,
+		"high": highs,
 		"threshold": high_threshold,
-		"findings":  findings_raw,
+		"findings": findings_raw,
 	}
 }
 

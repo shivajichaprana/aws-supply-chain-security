@@ -36,17 +36,15 @@ approved_registry_prefix := "123456789012.dkr.ecr.us-east-1.amazonaws.com"
 # annotation + container image. `extra` overrides individual fields.
 make_pod(annotation_value, image) := obj if {
 	obj := {
-		"review": {
-			"object": {
-				"kind": "Pod",
-				"metadata": {
-					"name": "test-pod",
-					"namespace": "demo",
-					"annotations": {"cosign.sigstore.dev/signed": annotation_value},
-				},
-				"spec": {"containers": [{"name": "app", "image": image}]},
+		"review": {"object": {
+			"kind": "Pod",
+			"metadata": {
+				"name": "test-pod",
+				"namespace": "demo",
+				"annotations": {"cosign.sigstore.dev/signed": annotation_value},
 			},
-		},
+			"spec": {"containers": [{"name": "app", "image": image}]},
+		}},
 		"parameters": {"approvedRegistries": [approved_registry_prefix]},
 	}
 }
@@ -54,13 +52,11 @@ make_pod(annotation_value, image) := obj if {
 # Pod with NO annotations block at all.
 make_pod_no_annotations(image) := obj if {
 	obj := {
-		"review": {
-			"object": {
-				"kind": "Pod",
-				"metadata": {"name": "test-pod", "namespace": "demo"},
-				"spec": {"containers": [{"name": "app", "image": image}]},
-			},
-		},
+		"review": {"object": {
+			"kind": "Pod",
+			"metadata": {"name": "test-pod", "namespace": "demo"},
+			"spec": {"containers": [{"name": "app", "image": image}]},
+		}},
 		"parameters": {"approvedRegistries": [approved_registry_prefix]},
 	}
 }
@@ -68,16 +64,14 @@ make_pod_no_annotations(image) := obj if {
 # Build a Deployment whose pod template carries the annotation.
 make_deployment(annotation_value, image) := obj if {
 	obj := {
-		"review": {
-			"object": {
-				"kind": "Deployment",
-				"metadata": {"name": "test-deploy", "namespace": "demo"},
-				"spec": {"template": {
-					"metadata": {"annotations": {"cosign.sigstore.dev/signed": annotation_value}},
-					"spec": {"containers": [{"name": "app", "image": image}]},
-				}},
-			},
-		},
+		"review": {"object": {
+			"kind": "Deployment",
+			"metadata": {"name": "test-deploy", "namespace": "demo"},
+			"spec": {"template": {
+				"metadata": {"annotations": {"cosign.sigstore.dev/signed": annotation_value}},
+				"spec": {"containers": [{"name": "app", "image": image}]},
+			}},
+		}},
 		"parameters": {"approvedRegistries": [approved_registry_prefix]},
 	}
 }

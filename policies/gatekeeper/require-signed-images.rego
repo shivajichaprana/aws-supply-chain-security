@@ -49,8 +49,8 @@ violation contains {"msg": msg, "details": details} if {
 	)
 
 	details := {
-		"container":  container.name,
-		"image":      container.image,
+		"container": container.name,
+		"image": container.image,
 		"annotation": signature_annotation_key,
 	}
 }
@@ -65,8 +65,8 @@ violation contains {"msg": msg, "details": details} if {
 	)
 
 	details := {
-		"container":          container.name,
-		"image":              container.image,
+		"container": container.name,
+		"image": container.image,
 		"approvedRegistries": parameters_approved_registries,
 	}
 }
