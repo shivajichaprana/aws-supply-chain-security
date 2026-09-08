@@ -1,0 +1,53 @@
+# Checkov configuration for aws-supply-chain-security.
+#
+# Every suppression below is listed with the reason it does not apply here.
+# Anything not listed is expected to pass. LOW findings are reported but do not
+# fail the build.
+
+directory:
+  - terraform
+framework:
+  - terraform
+quiet: true
+compact: true
+output:
+  - cli
+soft-fail-on:
+  - LOW
+
+skip-check:
+  # --- CodeBuild ---
+  # The build runs docker build to produce the image this repository then signs
+  # and attests. Docker-in-Docker on CodeBuild requires privileged_mode; without
+  # it there is no image and nothing to sign.
+  - CKV_AWS_316   # CodeBuild project uses privileged mode
+
+  # --- Lambda: the Security Hub findings forwarder ---
+  # It calls the Slack webhook endpoint and the AWS control plane, both public.
+  # In a VPC it would need a NAT gateway to reach the same endpoints, adding
+  # cost and a failure mode without changing what it can talk to.
+  - CKV_AWS_117   # Lambda not inside a VPC
+  # signer.tf provisions an AWSLambda-SHA384-ECDSA signing profile for consumers
+  # to use. This function is packaged from an archive_file zip built at plan
+  # time and never passed through a signing job, so attaching a code-signing
+  # config in Enforce mode would block its own deployment. The profile, and the
+  # wiring, are documented there.
+  - CKV_AWS_272   # Lambda code-signing not configured
+  # The function's environment holds the NAME of a Secrets Manager secret, a
+  # severity threshold and a log level. The webhook itself is fetched at runtime
+  # with secretsmanager:GetSecretValue, so there is no secret material at rest
+  # in the environment for a CMK to protect.
+  - CKV_AWS_173   # Lambda environment variables not encrypted with a CMK
+
+  # --- S3: the build artifact bucket ---
+  # Nothing subscribes to object events. Artifacts are consumed by the build that
+  # wrote them and by whoever downloads them, not by an event-driven pipeline.
+  - CKV2_AWS_62   # bucket has no event notifications
+  # Access logging writes into another bucket, which raises this same finding on
+  # that bucket. S3 data events on this bucket are captured by CloudTrail, which
+  # is where the access record for an artifact store belongs anyway.
+  - CKV_AWS_18    # bucket has no access logging
+  # Artifacts transition to STANDARD_IA at 30 days and expire at 90. Replicating
+  # them to a second region would double the bill to protect objects that are
+  # deliberately short-lived and reproducible from the build that made them.
+  - CKV_AWS_144   # bucket has no cross-region replication
