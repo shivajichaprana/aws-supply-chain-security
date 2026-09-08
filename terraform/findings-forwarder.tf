@@ -261,6 +261,13 @@ resource "aws_iam_role_policy" "slack_forwarder" {
       {
         Effect = "Allow"
         Action = [
+          "sqs:SendMessage",
+        ]
+        Resource = aws_sqs_queue.slack_forwarder_dlq[0].arn
+      },
+      {
+        Effect = "Allow"
+        Action = [
           "secretsmanager:GetSecretValue",
         ]
         Resource = "arn:${local.partition}:secretsmanager:${local.region}:${data.aws_caller_identity.current.account_id}:secret:${var.slack_webhook_secret_name}-*"
@@ -269,12 +276,32 @@ resource "aws_iam_role_policy" "slack_forwarder" {
   })
 }
 
+# ---------------------------------------------------------------------------
+# Dead letter queue.
+#
+# EventBridge invokes this function asynchronously, so a failure after the
+# retries are exhausted drops the finding silently. For a Security Hub
+# forwarder that means an alert nobody ever sees, which is worse than a noisy
+# one. Failed events land here instead.
+# ---------------------------------------------------------------------------
+resource "aws_sqs_queue" "slack_forwarder_dlq" {
+  count = local.deploy_slack_lambda ? 1 : 0
+
+  name                      = "${local.forwarder_name}-dlq"
+  message_retention_seconds = 1209600 # 14 days, the SQS maximum
+  sqs_managed_sse_enabled   = true
+
+  tags = {
+    Name    = "${local.forwarder_name}-dlq"
+    Purpose = "findings-forwarder-dead-letter"
+  }
+}
+
 resource "aws_cloudwatch_log_group" "slack_forwarder" {
   count = local.deploy_slack_lambda ? 1 : 0
 
   name              = "/aws/lambda/${local.forwarder_name}"
   retention_in_days = var.lambda_log_retention_days
-  kms_key_id        = aws_kms_key.build.arn
 }
 
 resource "aws_lambda_function" "slack_forwarder" {
@@ -299,6 +326,10 @@ resource "aws_lambda_function" "slack_forwarder" {
   }
 
   reserved_concurrent_executions = 5 # cap concurrency so a finding storm can't blow runtime quota.
+
+  dead_letter_config {
+    target_arn = aws_sqs_queue.slack_forwarder_dlq[0].arn
+  }
 
   tracing_config {
     mode = "Active"
