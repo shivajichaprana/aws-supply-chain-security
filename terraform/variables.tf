@@ -165,9 +165,9 @@ variable "notification_email" {
 }
 
 variable "lambda_log_retention_days" {
-  description = "CloudWatch Logs retention (days) for the Slack forwarder Lambda."
+  description = "CloudWatch Logs retention (days) for the Slack forwarder Lambda. Defaults to a year: this log is the record of which Security Hub findings were forwarded and which were dropped, so it is audit evidence rather than debug output."
   type        = number
-  default     = 30
+  default     = 365
 
   validation {
     condition     = contains([1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1827, 3653], var.lambda_log_retention_days)
