@@ -148,11 +148,80 @@ resource "aws_s3_bucket_versioning" "artifacts" {
   }
 }
 
+# ---------------------------------------------------------------------------
+# Symmetric CMK for build artifacts and build logs.
+#
+# The cosign key above is ECC_NIST_P256 / SIGN_VERIFY and cannot encrypt, so a
+# separate symmetric key is needed. Build artifacts are the thing this whole
+# repository exists to protect, and SSE-S3 gives no key policy, no grant
+# auditing and no way to revoke access to what has already been written.
+# ---------------------------------------------------------------------------
+resource "aws_kms_key" "build" {
+  description             = "Build artifact and build log encryption for ${var.project_tag}"
+  deletion_window_in_days = 30
+  enable_key_rotation     = true
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "EnableRootAccountAdmin"
+        Effect    = "Allow"
+        Principal = { AWS = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root" }
+        Action    = "kms:*"
+        Resource  = "*"
+      },
+      {
+        Sid       = "AllowCodeBuildRoleToUseTheKey"
+        Effect    = "Allow"
+        Principal = { AWS = aws_iam_role.codebuild.arn }
+        Action = [
+          "kms:Encrypt",
+          "kms:Decrypt",
+          "kms:ReEncrypt*",
+          "kms:GenerateDataKey*",
+          "kms:DescribeKey",
+        ]
+        Resource = "*"
+      },
+      {
+        Sid       = "AllowCloudWatchLogs"
+        Effect    = "Allow"
+        Principal = { Service = "logs.${var.region}.amazonaws.com" }
+        Action = [
+          "kms:Encrypt*",
+          "kms:Decrypt*",
+          "kms:ReEncrypt*",
+          "kms:GenerateDataKey*",
+          "kms:Describe*",
+        ]
+        Resource = "*"
+        Condition = {
+          ArnLike = {
+            "kms:EncryptionContext:aws:logs:arn" = "arn:${data.aws_partition.current.partition}:logs:${var.region}:${data.aws_caller_identity.current.account_id}:log-group:*"
+          }
+        }
+      },
+    ]
+  })
+
+  tags = {
+    Name    = "${var.project_tag}-build"
+    Purpose = "build-artifact-encryption"
+  }
+}
+
+resource "aws_kms_alias" "build" {
+  name          = "alias/${var.project_tag}-build"
+  target_key_id = aws_kms_key.build.key_id
+}
+
 resource "aws_s3_bucket_server_side_encryption_configuration" "artifacts" {
   bucket = aws_s3_bucket.artifacts.id
   rule {
     apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
+      kms_master_key_id = aws_kms_key.build.arn
+      sse_algorithm     = "aws:kms"
     }
     bucket_key_enabled = true
   }
@@ -191,7 +260,8 @@ resource "aws_s3_bucket_lifecycle_configuration" "artifacts" {
 # ---------------------------------------------------------------------------
 resource "aws_cloudwatch_log_group" "codebuild" {
   name              = "/aws/codebuild/${var.project_tag}"
-  retention_in_days = 90
+  retention_in_days = 365 # build logs are provenance evidence, keep an audit year
+  kms_key_id        = aws_kms_key.build.arn
 
   tags = {
     Name = "${var.project_tag}-codebuild"
@@ -344,6 +414,8 @@ resource "aws_codebuild_project" "supply_chain" {
     type     = "S3"
     location = "${aws_s3_bucket.artifacts.bucket}/cache"
   }
+
+  encryption_key = aws_kms_key.build.arn
 
   environment {
     compute_type    = var.codebuild_compute_type
