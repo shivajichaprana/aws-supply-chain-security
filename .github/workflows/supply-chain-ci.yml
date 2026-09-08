@@ -126,13 +126,10 @@ jobs:
 
       - name: checkov scan terraform/
         run: |
-          checkov \
-            --directory terraform \
-            --framework terraform \
-            --quiet \
-            --compact \
-            --soft-fail-on LOW \
-            --output cli
+          # Scan settings, and the reason for every suppression, live in
+          # .checkov.yaml so they are reviewable in one place rather than spread
+          # between this file and a --skip-check list.
+          checkov --config-file .checkov.yaml
 
   opa-test:
     name: opa test (gatekeeper policies)
