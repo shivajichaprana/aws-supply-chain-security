@@ -302,6 +302,7 @@ resource "aws_cloudwatch_log_group" "slack_forwarder" {
 
   name              = "/aws/lambda/${local.forwarder_name}"
   retention_in_days = var.lambda_log_retention_days
+  kms_key_id        = aws_kms_key.build.arn
 }
 
 resource "aws_lambda_function" "slack_forwarder" {
